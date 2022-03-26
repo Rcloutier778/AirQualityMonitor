@@ -22,11 +22,16 @@ GAS_WEIGHT = 0.75
 HUM_WEIGHT = 0.25
 
 HUM_REF = 40
-GAS_REF = 250000
+GAS_REF = 2500
 
-GAS_UPPER_LIMIT = 50000
-GAS_LOWER_LIMIT = 5000
+GAS_UPPER_LIMIT = 300000
+GAS_LOWER_LIMIT = 10000
 
+SEA_LEVEL_PRESSURE = 1013.25
+
+TEMPERATURE_OFFSET = 0.0
+HUMIDITY_OFFSET = 0.0
+ALTITUDE = 0.0
 
 class BME680(object):
     i2c = None
@@ -36,10 +41,10 @@ class BME680(object):
 
     data = None
 
-    def __init__(self):
-        self.capture_thread = threading.Thread(target=self.capturewrap, daemon=True)
-        self.capture_thread.start()
-        
+    def __init__(self, threadit=True):
+        if threadit:
+            self.capture_thread = threading.Thread(target=self.capturewrap, daemon=True)
+            self.capture_thread.start()
 
     def calibrate(self):
         numReadings = 10
@@ -48,7 +53,7 @@ class BME680(object):
             time.sleep(0.0015)
         self.gas_reference = self.gas_reference / numReadings
 
-    def calc_IAQ(self, humid, gas):
+    def calc_IAQ(self, humid):
 
         # Calculate humidity contribution to IAQ Index
         if humid >= 38 and humid <= 42:
@@ -66,39 +71,41 @@ class BME680(object):
             self.gas_reference = GAS_UPPER_LIMIT
         if self.gas_reference < GAS_LOWER_LIMIT:
             self.gas_reference = GAS_LOWER_LIMIT
-        gas_score = (GAS_WEIGHT/(GAS_UPPER_LIMIT-GAS_LOWER_LIMIT)*self.gas_reference -(GAS_LOWER_LIMIT*(GAS_WEIGHT/(GAS_UPPER_LIMIT-GAS_LOWER_LIMIT))))*100;
-    
+        gas_score = (GAS_WEIGHT/(GAS_UPPER_LIMIT-GAS_LOWER_LIMIT)*self.gas_reference -(GAS_LOWER_LIMIT*(GAS_WEIGHT/(GAS_UPPER_LIMIT-GAS_LOWER_LIMIT))))*100.0;
         score = (100 - (hum_score + gas_score)) * 5
-        return score
+        return score, hum_score, gas_score
 
     def capture(self):
         self.i2c = board.I2C()
         self.bme = adafruit_bme680.Adafruit_BME680_I2C(self.i2c)
+        self.bme.sea_level_pressure = SEA_LEVEL_PRESSURE
         self.calibrate()
 
         numReadings = 5
         while True:
-            temp, humid, gas, pressure = 0, 0, 0, 0
+            temp, humid, pressure = 0, 0,  0
             for _ in range(numReadings):
                 temp += self.bme.temperature
                 humid += self.bme.humidity
-                gas += self.bme.gas
+                self.gas_reference += self.bme.gas
                 pressure += self.bme.pressure
                 time.sleep(1)
+            self.gas_reference /= numReadings
             temp /= numReadings
             humid /= numReadings
-            gas /= numReadings
             pressure /= numReadings
-            iaq = self.calc_IAQ(humid, gas)
+            iaq, hum_score, gas_score = self.calc_IAQ(humid)
             result = {
                     'temperature': temp,
                     'pressure': pressure,
                     'iaq': iaq,
                     'humidity': humid,
-                    'bvoce_ppm': gas
+                    'bvoce_ppm': self.gas_reference,
+                    'hum_score': hum_score,
+                    'gas_score': gas_score,
                     }
             self.data = result
-
+            print(result)
 
     def capturewrap(self):
         while True:
@@ -111,10 +118,18 @@ class BME680(object):
                 print('Capture thread exited; restarting')
             time.sleep(5)
 
+    def apply_offsets(self):
+        if self.data:
+            self.data['temperature'] = float(self.data['temperature']) + TEMPERATURE_OFFSET
+            self.data['temperature'] = (self.data['temperature'] * 9.0/5.0) + 32.0
+
+            self.data['humidity'] = float(self.data['humidity']) + HUMIDITY_OFFSET
+            self.data['pressure'] = float(self.data['pressure']) * (1-((0.0065 *   ALTITUDE) / (self.data['temperature'] + (0.0065 * ALTITUDE) + 273.15))) ** -5.257
+
     def get_readings(self):
         if self.data:
-            return [
-                {
+            self.apply_offsets()
+            return {
                     'measurement': 'BME680',
                     'fields': {
                         'temperature': float(self.data['temperature']),
@@ -123,16 +138,17 @@ class BME680(object):
                         'air_quality_score': float(self.data['iaq']),
                         #'air_quality_score_accuracy': int(self.data['iaq_accuracy']),
                         #'eco2_ppm': float(self.data['eco2_ppm']),
-                        'bvoce_ppm': float(self.data['bvoce_ppm'])
+                        'bvoce_ppm': float(self.data['bvoce_ppm']),
+                        'hum_score': float(self.data['hum_score']),
+                        'gas_score': float(self.data['gas_score']),
                     }
                 }
-            ]
         else:
             return None
 
 
 if __name__ == "__main__":
-    bme = _BME680()
+    bme = BME680(False)
     bme.capture()
     while True:
         print( bme.get_readings() )

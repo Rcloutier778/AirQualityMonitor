@@ -5,29 +5,22 @@ import time
 import os
 import json
 
-TEMPERATURE_OFFSET = 0.0
-HUMIDITY_OFFSET = 0.0
-ALTITUDE = 0.0
-
 class AQM():
 
     def __init__(self):
+        self.sensors = []
+
         from .bme680 import BME680
-        self.sensor = BME680()
+        self.sensors.append( BME680() )
+
+        from .pm25 import PM25
+        self.sensors.append( PM25() )
 
     def sample(self):
-        return self.apply_offsets(self.sensor.get_readings())
+        res = []
+        for sensor in self.sensors:
+            meas = sensor.get_readings()
+            if meas:
+                res.append(meas)
 
-
-    def apply_offsets(self, measurements):
-        if not measurements:
-            return None
-        # Apply any offsets to the measurements before storing them in the database
-        measurements[0]['fields']['temperature'] = measurements[0]['fields']['temperature'] + TEMPERATURE_OFFSET
-        measurements[0]['fields']['humidity'] = measurements[0]['fields']['humidity'] + HUMIDITY_OFFSET
-        # if there's an altitude set (in meters), then apply a barometric pressure offset
-        measurements[0]['fields']['pressure'] = measurements[0]['fields']['pressure'] * (1-((0.0065 * ALTITUDE) / (measurements[0]['fields']['temperature'] + (0.0065 * ALTITUDE) + 273.15))) ** -5.257
-
-        return measurements
-
-
+        return res

@@ -39,7 +39,6 @@ def main():
         while True:
             sample = aqm.sample()
             if sample is not None:
-                sample[0]['fields']['temperature'] =  float(sample[0]['fields']['temperature'] * 9.0/5.0) + 32.0
                 try:
                     influx_writer.write('aqm', 'orgname', sample)
                     writeRetries = 0
