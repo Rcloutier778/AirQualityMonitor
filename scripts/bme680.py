@@ -41,7 +41,9 @@ class BME680(object):
 
     data = None
 
+
     def __init__(self, threadit=True):
+        self.threadit = threadit
         if threadit:
             self.capture_thread = threading.Thread(target=self.capturewrap, daemon=True)
             self.capture_thread.start()
@@ -95,6 +97,14 @@ class BME680(object):
             humid /= numReadings
             pressure /= numReadings
             iaq, hum_score, gas_score = self.calc_IAQ(humid)
+
+            temp += TEMPERATURE_OFFSET
+            pressure = pressure * (1-((0.0065 *   ALTITUDE) / (temp + (0.0065 * ALTITUDE) + 273.15))) ** -5.257
+            # Convert to F after pressure adjustment
+            temp = (temp * 9.0/5.0) + 32.0
+
+            humid += HUMIDITY_OFFSET
+
             result = {
                     'temperature': temp,
                     'pressure': pressure,
@@ -105,7 +115,8 @@ class BME680(object):
                     'gas_score': gas_score,
                     }
             self.data = result
-            print(result)
+            if not self.threadit:
+                print(result)
 
     def capturewrap(self):
         while True:
@@ -118,17 +129,8 @@ class BME680(object):
                 print('Capture thread exited; restarting')
             time.sleep(5)
 
-    def apply_offsets(self):
-        if self.data:
-            self.data['temperature'] = float(self.data['temperature']) + TEMPERATURE_OFFSET
-            self.data['temperature'] = (self.data['temperature'] * 9.0/5.0) + 32.0
-
-            self.data['humidity'] = float(self.data['humidity']) + HUMIDITY_OFFSET
-            self.data['pressure'] = float(self.data['pressure']) * (1-((0.0065 *   ALTITUDE) / (self.data['temperature'] + (0.0065 * ALTITUDE) + 273.15))) ** -5.257
-
     def get_readings(self):
         if self.data:
-            self.apply_offsets()
             return {
                     'measurement': 'BME680',
                     'fields': {
